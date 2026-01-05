@@ -43,9 +43,11 @@ class SetpointPublisher(Node):
         pose.pose.orientation.w = q[3]
         self.publisher_.publish(pose)
 
-        if self.counter % 2000 == 0:
+        if self.counter % 500 == 0: #2000
             self.index = (self.index + 1) % len(self.setpoints)
             print(f"Publishing setpoint {self.index}: {self.setpoints[self.index]}")
+            # print the namespace
+            print(f"Namespace: '{self.namespace}'")
         self.counter += 1
 
 

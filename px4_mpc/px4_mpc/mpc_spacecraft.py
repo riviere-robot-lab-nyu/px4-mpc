@@ -146,6 +146,7 @@ class SpacecraftMPC(Node):
             'fmu/out/vehicle_attitude',
             self.vehicle_attitude_callback,
             qos_profile_sub)
+        # vehicle_angular_velocity is not subscribed, since its commented in https://github.com/PX4/PX4-Autopilot/blob/main/src/modules/uxrce_dds_client/dds_topics.yaml
         self.angular_vel_sub = self.create_subscription(
             VehicleAngularVelocity,
             'fmu/out/vehicle_angular_velocity',
@@ -153,7 +154,7 @@ class SpacecraftMPC(Node):
             qos_profile_sub)
         self.local_position_sub = self.create_subscription(
             VehicleLocalPosition,
-            'fmu/out/vehicle_local_position',
+            'fmu/out/vehicle_local_position_v1',
             self.vehicle_local_position_callback,
             qos_profile_sub)
 
@@ -170,6 +171,15 @@ class SpacecraftMPC(Node):
                 self.get_setpoint_pose_callback,
                 0
             )
+
+
+        # self.setpoint_pose_sub = self.create_subscription(
+        #         PoseStamped,
+        #         'px4_mpc/setpoint_pose',
+        #         self.get_setpoint_pose_callback,
+        #         0
+        #     )
+
 
         self.publisher_offboard_mode = self.create_publisher(
             OffboardControlMode,
@@ -284,6 +294,20 @@ class SpacecraftMPC(Node):
     def publish_wrench_setpoint(self, u_pred):
         # u_pred is [Fx, Fy, Tz]] in FLU frame
 
+        ############## PERIODIC SIGNAL FOR TESTING PURPOSES ##############
+        # Get current time in seconds
+        # t = self.get_clock().now().nanoseconds / 1e9
+        # Periodic signal: sin clipped to positive (0 to 1)
+        # frequency = 1.0/5  # Hz
+        # amplitude = 1  # Adjust as needed
+        # periodic_value = np.clip(np.sin(2 * np.pi * frequency * t), 0, 1) * amplitude
+        # F_scaling = periodic_value
+        # T_scaling = periodic_value
+        # u_pred[0, 0] *= F_scaling
+        # u_pred[0, 1] *= F_scaling
+        # u_pred[0, 2] *= T_scaling
+        ###############################################################
+
         # The PX4 uses normalized wrench input. Scaling with respect to the maximum force and torque.
         F_scaling = 1/(2 * 1.5)
         T_scaling = 1/(4 * 0.12 * 1.5)
@@ -345,8 +369,8 @@ class SpacecraftMPC(Node):
 
         # Check if the data is valid based on the timestamps
         if (current_time - self.vehicle_attitude_timestamp > DATA_VALIDITY_STREAM or
-            current_time - self.vehicle_local_position_timestamp > DATA_VALIDITY_STREAM or
-            current_time - self.vehicle_angular_velocity_timestamp > DATA_VALIDITY_STREAM):
+            current_time - self.vehicle_local_position_timestamp > DATA_VALIDITY_STREAM):
+            # current_time - self.vehicle_angular_velocity_timestamp > DATA_VALIDITY_STREAM):
             self.get_logger().warn("Vehicle attitude, position, or angular velocity data is too old. Skipping offboard control...")
             return False
 
@@ -395,12 +419,19 @@ class SpacecraftMPC(Node):
                            self.vehicle_attitude[1],
                            self.vehicle_attitude[2],
                            self.vehicle_attitude[3]]).reshape(10, 1)
+            
+            # fake x0 for testing purposes, all zeros except vechicle_attitude
+            # x0 = np.zeros((10, 1))
+            # x0[6:10, 0] = np.array([0.707, 0.0, 0.0, 0.707]) # w, x, y, z
+             
             ref = np.concatenate((self.setpoint_position,       # position
                                   np.zeros(3),                  # velocity
                                   self.setpoint_attitude,       # attitude
                                   np.zeros(6)), axis=0)         # inputs reference (F, w)
             ref = np.repeat(ref.reshape((-1, 1)), self.mpc.N + 1, axis=1)
         elif self.mode == 'wrench':
+            # TODO: Now vehicle_angular_velocity is not subscribed, so it is set to zero
+            # So wrench MPC is not working properly
             x0 = np.array([self.vehicle_local_position[0],
                            self.vehicle_local_position[1],
                            self.vehicle_local_position[2],
@@ -421,6 +452,8 @@ class SpacecraftMPC(Node):
                                   np.zeros(3)), axis=0)         # inputs reference (F, torque)
             ref = np.repeat(ref.reshape((-1, 1)), self.mpc.N + 1, axis=1)
         elif self.mode == 'direct_allocation':
+            # TODO: Now vehicle_angular_velocity is not subscribed, 
+            # so direct allocation MPC is not working properly
             x0 = np.array([self.vehicle_local_position[0],
                            self.vehicle_local_position[1],
                            self.vehicle_local_position[2],
@@ -484,6 +517,7 @@ class SpacecraftMPC(Node):
         self.setpoint_attitude[1] = msg.pose.orientation.x
         self.setpoint_attitude[2] = msg.pose.orientation.y
         self.setpoint_attitude[3] = msg.pose.orientation.z
+        self.get_logger().info(f"New setpoint received: pos {self.setpoint_position}, att {self.setpoint_attitude}")
 
     def vector2PoseMsg(self, frame_id, position, attitude):
         pose_msg = PoseStamped()
